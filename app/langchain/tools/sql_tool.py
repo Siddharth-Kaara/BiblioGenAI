@@ -49,7 +49,6 @@ class SQLQueryTool(BaseTool):
     DO NOT include organization filtering in the description; the tool adds it automatically.
     """
     
-    user_id: str
     organization_id: str
     selected_db: Optional[str] = None
     
@@ -139,31 +138,30 @@ Schema:
 Query description: {query_description}
 
 Important Guidelines:
-1. Use parameter placeholders (e.g., :user_id, :filter_value) for ALL dynamic values derived from the query description (like names, IDs, specific filter values). DO NOT use parameters for date/time calculations.
-2. Generate a valid JSON dictionary mapping placeholder names (without the colon) to their actual values.
+1. Use parameter placeholders (e.g., :filter_value, :hierarchy_id) for ALL dynamic values derived from the query description (like names, IDs, specific filter values) EXCEPT for the mandatory :organization_id and time-related values. DO NOT use parameters for date/time calculations.
+2. Generate a valid JSON dictionary mapping placeholder names (without the colon) to their actual values. This MUST include `organization_id`.
 3. Quote table and column names with double quotes (e.g., "hierarcyCaches", "createdAt").
 4. **Mandatory Organization Filtering:** ALWAYS filter results by the organization ID. Use the parameter `:organization_id`. Add the appropriate WHERE clause:
     *   If querying table '5' (event data), add `"organizationId" = :organization_id` to your WHERE clause (using AND if other conditions exist).
     *   If querying `hierarcyCaches` directly for the organization's details, filter using `"id" = :organization_id`.
-    *   If querying `hierarcyCaches` for specific locations *within* an organization, you might need to join or use other filters based on the query, but always ensure the data relates back to the `:organization_id`.
-    *   You MUST include `:organization_id` as a key in the `params` dictionary.
+    *   If querying `hierarcyCaches` for specific locations *within* an organization, ensure the data relates back to the `:organization_id` (e.g., via JOIN or direct filter on `parentId` if appropriate).
+    *   You MUST include `:organization_id` as a key in the `params` dictionary with the correct value. **Use the exact `organization_id` value provided to you in the context (e.g., '{organization_id}'), do NOT use example UUIDs or placeholders like 'your-organization-uuid'.**
 5. **JOINs for Related Data:** When joining table '5' and `hierarcyCaches`, use appropriate keys like `"5"."hierarchyId" = hc."id"` (for location-specific events) or `"5"."organizationId" = hc."id"` (for organization details). Remember to apply the organization filter (Guideline #4).
-6. **User Filtering:** The user ID is '{user_id}'. If filtering by creator seems relevant based on the query_description (e.g., "my hierarchies"), add a condition like `hc."createdBy" = :user_id` and include 'user_id': '{user_id}' in the params. ONLY do this if '{user_id}' is a valid UUID and the `createdBy` column exists.
-7. **Case Sensitivity:** PostgreSQL is case-sensitive; respect exact table/column capitalization.
-8. **Column Selection:** Use specific column selection instead of SELECT *.
-9. **Sorting:** Add ORDER BY clauses for meaningful sorting, especially when LIMIT is used.
-10. **LIMIT Clause:**
+6. **Case Sensitivity:** PostgreSQL is case-sensitive; respect exact table/column capitalization.
+7. **Column Selection:** Use specific column selection instead of SELECT *.
+8. **Sorting:** Add ORDER BY clauses for meaningful sorting, especially when LIMIT is used.
+9. **LIMIT Clause:**
     *   For standard SELECT queries retrieving multiple rows, ALWAYS include `LIMIT 50` at the end.
     *   **DO NOT** add `LIMIT` for aggregate queries (like COUNT(*), SUM(...)) expected to return a single summary row.
-11. **Aggregations (COUNT vs SUM):**
+10. **Aggregations (COUNT vs SUM):**
     *   Use `COUNT(*)` for "how many records/items".
     *   Use `SUM("column_name")` for "total number/sum" based on a specific value column (e.g., total logins from column "5").
     *   Ensure `GROUP BY` includes all non-aggregated selected columns.
-12. **User-Friendly Aliases:**
+11. **User-Friendly Aliases:**
     *   When selecting columns or using aggregate functions (SUM, COUNT, etc.), ALWAYS use descriptive, user-friendly aliases with title casing using the `AS` keyword.
     *   Examples: `SELECT hc."hierarchyId" AS "Hierarchy ID"`, `SELECT COUNT(*) AS "Total Records"`, `SELECT SUM("39") AS "Total Entries"`.
     *   Do NOT use code-style aliases like `total_entries` or `hierarchyId`.
-13. **Benchmarking for Analytical Queries:**
+12. **Benchmarking for Analytical Queries:**
     *   If the `query_description` asks for analysis or comparison regarding a specific entity (e.g., "is branch X busy?", "compare borrows for branch Y"), *in addition* to selecting the specific metric(s) for that entity, try to include a simple benchmark for comparison in the same query.
     *   **Use CTEs for Benchmarks:** The preferred way to calculate an organization-wide average (or similar benchmark) alongside a specific entity's value is using a Common Table Expression (CTE).
         *   First, define a CTE (e.g., `WITH EntityMetrics AS (...)`) that calculates the metric (e.g., `SUM("metric_column")`) grouped by the relevant entity ID (`hierarchyId`). Apply necessary time/organization filters within the CTE.
@@ -172,43 +170,44 @@ Important Guidelines:
     *   **Avoid nested aggregates:** Do NOT use invalid nested aggregate/window functions like `AVG(SUM(...)) OVER ()`.
     *   Only include this benchmark if it can be done efficiently. The CTE approach is generally efficient.
     *   Ensure both the specific value and the benchmark value have clear, user-friendly aliases.
-14. **Time Filtering (Generate SQL Directly):**
+13. **Time Filtering (Generate SQL Directly):**
     *   If the `query_description` includes time references (e.g., "last week", "yesterday", "past 3 months", "since June 1st", "before 2024"), you MUST generate the appropriate SQL `WHERE` clause condition directly.
     *   Use relevant SQL functions like `NOW()`, `CURRENT_DATE`, `INTERVAL`, `DATE_TRUNC`, `EXTRACT`, and comparison operators (`>=`, `<`, `BETWEEN`).
     *   **Relative Time Interpretation:** For simple relative terms like "last week", "last month", prioritize using straightforward intervals like `NOW() - INTERVAL '7 days'` or `NOW() - INTERVAL '1 month'`, respectively. Use `DATE_TRUNC` or specific date ranges only if the user query explicitly demands calendar alignment (e.g., "the week starting Monday", "the calendar month of March").
-    *   **Relative Months/Years:** For month names (e.g., "March", "in June") without a specified year, assume the **current year** (use `EXTRACT(YEAR FROM NOW())`). For years alone (e.g., "in 2024"), query the whole year.
+    *   **Relative Months/Years:** For month names (e.g., "March", "in June") without a specified year, **ALWAYS** assume the **current year** in your date logic. For years alone (e.g., "in 2024"), query the whole year. **Critically, incorporate the current year directly into your date comparisons using `NOW()` or `CURRENT_DATE` where appropriate, don't just extract the year separately and then use a hardcoded year in the comparison.**
     *   Identify the correct timestamp column for filtering (e.g., `"eventTimestamp"` for table `"5"` and `"8"`, `"createdAt"` for others - check schema).
     *   Example for "last week": `WHERE "eventTimestamp" >= NOW() - INTERVAL '7 days'` # Prefer this
     *   Example for "yesterday": `WHERE DATE_TRUNC('day', "eventTimestamp") = CURRENT_DATE - INTERVAL '1 day'` # DATE_TRUNC makes sense here
-    *   Example for "March" (current year): `WHERE EXTRACT(YEAR FROM "eventTimestamp") = EXTRACT(YEAR FROM NOW()) AND EXTRACT(MONTH FROM "eventTimestamp") = 3`
+    *   Example for "March" (current year): `WHERE EXTRACT(MONTH FROM "eventTimestamp") = 3 AND EXTRACT(YEAR FROM "eventTimestamp") = EXTRACT(YEAR FROM NOW())` # Check month AND current year
+    *   Example for "first week of February" (current year): `WHERE "eventTimestamp" >= DATE_TRUNC('year', NOW()) + INTERVAL '1 month' AND "eventTimestamp" < DATE_TRUNC('year', NOW()) + INTERVAL '1 month' + INTERVAL '7 days'` 
     *   Example for "June 2024": `WHERE "eventTimestamp" >= '2024-06-01' AND "eventTimestamp" < '2024-07-01'`
     *   **DO NOT** use parameters like `:start_date` or `:end_date` for these time calculations.
-15. **Footfall Queries (Table "8"):**
+14. **Footfall Queries (Table "8"):**
     *   If the query asks generally about "footfall", "visitors", "people entering/leaving", or "how many people visited", calculate **both** the sum of entries (`SUM("39")`) and the sum of exits (`SUM("40")`).
-    *   Alias them clearly (e.g., `AS total_entries`, `AS total_exits`).
+    *   Alias them clearly (e.g., `AS "Total Entries"`, `AS "Total Exits"`).
     *   If the query specifically asks *only* for entries (e.g., "people came in") or *only* for exits (e.g., "people went out"), then only sum the corresponding column ("39" or "40").
 
 Output Format:
 Return ONLY a JSON object with two keys:
 - "sql": A string containing the generated SQL query (potentially with direct time logic) and placeholders for non-time values.
-- "params": A JSON dictionary mapping placeholder names (e.g., user_id, filter_value, organization_id) to their corresponding values. This dictionary should NOT contain start/end dates.
-**Do not copy parameter values directly from the examples; use the actual values relevant to the query description and the provided Organization ID/User ID.**
+- "params": A JSON dictionary mapping placeholder names (e.g., filter_value, organization_id) to their corresponding values. This dictionary should NOT contain start/end dates.
+**Do not copy parameter values directly from the examples; use the actual values relevant to the query description and the provided Organization ID.**
 
 Example (Query hierarchy details for the Org):
 {{
   "sql": "SELECT \"name\", \"shortName\" FROM \"hierarchyCaches\" hc WHERE hc.\"id\" = :organization_id LIMIT 50",
-  "params": {{ "organization_id": "org-uuid-123" }}
+  "params": {{ "organization_id": "{organization_id}" }}
 }}
 
 Example (Aggregate Query for the Org):
 {{
    "sql": "SELECT COUNT(*) FROM \"5\" WHERE \"organizationId\" = :organization_id AND \"eventTimestamp\" >= NOW() - INTERVAL '1 month'",
-   "params": {{ "organization_id": "org-uuid-456" }}
+   "params": {{ "organization_id": "{organization_id}" }}
 }}
 """
         
         prompt = PromptTemplate(
-            input_variables=["schema", "user_id", "organization_id", "query_description"],
+            input_variables=["schema", "organization_id", "query_description"],
             template=template,
         )
         
@@ -223,7 +222,6 @@ Example (Aggregate Query for the Org):
         try:
             invoke_payload = {
                 "schema": schema_info,
-                "user_id": self.user_id,
                 "organization_id": self.organization_id,
                 "query_description": query_description,
             }
@@ -248,20 +246,18 @@ Example (Aggregate Query for the Org):
                 logger.warning(f"LLM parameter :organization_id ({parameters['organization_id']}) != tool's ({self.organization_id}). Overwriting.")
                 parameters['organization_id'] = self.organization_id
             else:
-                 logger.debug(f":organization_id={self.organization_id} correctly included by LLM.")
-
-            sql_query = sql_query.strip()
-            if sql_query.endswith(";"):
-                sql_query = sql_query[:-1].strip()
+                logger.debug(f":organization_id ({self.organization_id}) present and correct in LLM params.")
+                
+            # Remove any user_id parameter if LLM included it erroneously
+            if 'user_id' in parameters:
+                logger.warning("LLM included :user_id parameter erroneously. Removing.")
+                del parameters['user_id']
             
-            logger.info(f"Successfully generated SQL for org {self.organization_id}.")
-            logger.debug(f"Generated SQL: {sql_query}")
-            logger.debug(f"Generated Params: {parameters}") 
+            logger.debug(f"Generated SQL: {sql_query}, Params: {parameters}")
             return sql_query, parameters
-            
         except Exception as e:
-            logger.error(f"Error generating SQL for org {self.organization_id}: {e}", exc_info=True)
-            raise ValueError(f"Failed to generate SQL from description: {e}")
+            logger.error(f"Error generating SQL: {e}", exc_info=True)
+            raise
     
     def _execute_sql(self, sql: str, parameters: Dict[str, Any], db_name: str) -> Dict:
         """Execute SQL with parameters and return results."""
@@ -360,7 +356,7 @@ Example (Aggregate Query for the Org):
         self, query_description: str, db_name: Optional[str] = None
     ) -> str:
         """Run the tool: generate parameterized SQL, execute, format results."""
-        logger.info(f"Executing SQL query tool for user {self.user_id}, org {self.organization_id} with description: '{query_description}'")
+        logger.info(f"Executing SQL query tool for org {self.organization_id} with description: '{query_description}'")
         
         target_db = db_name or self.selected_db
         if not target_db:

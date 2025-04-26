@@ -1,0 +1,77 @@
+2025-04-26 16:55:09,499 - app.main - INFO - Starting up Bibliotheca Chatbot API
+2025-04-26 16:55:25,481 - app.main - INFO - Starting up Bibliotheca Chatbot API
+2025-04-26 16:55:38,796 - app.api.chat - INFO - Received chat request for org b781b517-8954-e811-2a94-0024e880a2b7 with session_id: None
+2025-04-26 16:55:38,805 - app.langchain.agent - INFO - Processing chat message for org b781b517-8954-e811-2a94-0024e880a2b7, session None. Original message: 'Compare the total successful borrows for the 'Main Branch' and the 'Argyle Branch' during the first week of February. Just tell me which branch had more.'
+2025-04-26 16:55:38,807 - app.langchain.agent - INFO - Initializing Azure OpenAI LLM with deployment 
+2025-04-26 16:55:38,807 - app.langchain.agent - ERROR - Critical error in process_chat_message for org b781b517-8954-e811-2a94-0024e880a2b7: Missing credentials. Please pass one of `api_key`, `azure_ad_token`, `azure_ad_token_provider`, or the `AZURE_OPENAI_API_KEY` or `AZURE_OPENAI_AD_TOKEN` environment variables.
+Traceback (most recent call last):
+  File "C:\Users\Siddharth\Desktop\Work\Bibliotheca\API\app\langchain\agent.py", line 710, in process_chat_message
+    app = create_graph_app(organization_id)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Siddharth\Desktop\Work\Bibliotheca\API\app\langchain\agent.py", line 649, in create_graph_app
+    llm_with_bindings = create_llm_with_tools_and_final_response_structure(organization_id)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Siddharth\Desktop\Work\Bibliotheca\API\app\langchain\agent.py", line 192, in create_llm_with_tools_and_final_response_structure
+    llm = get_llm()
+          ^^^^^^^^^
+  File "C:\Users\Siddharth\Desktop\Work\Bibliotheca\API\app\langchain\agent.py", line 170, in get_llm
+    return AzureChatOpenAI(
+           ^^^^^^^^^^^^^^^^
+  File "C:\Users\Siddharth\anaconda3\Lib\site-packages\langchain_core\load\serializable.py", line 125, in __init__
+    super().__init__(*args, **kwargs)
+  File "C:\Users\Siddharth\anaconda3\Lib\site-packages\pydantic\main.py", line 214, in __init__
+    validated_self = self.__pydantic_validator__.validate_python(data, self_instance=self)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Siddharth\anaconda3\Lib\site-packages\langchain_openai\chat_models\azure.py", line 654, in validate_environment
+    self.root_client = openai.AzureOpenAI(**client_params, **sync_specific)  # type: ignore[arg-type]
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Siddharth\anaconda3\Lib\site-packages\openai\lib\azure.py", line 173, in __init__
+    raise OpenAIError(
+openai.OpenAIError: Missing credentials. Please pass one of `api_key`, `azure_ad_token`, `azure_ad_token_provider`, or the `AZURE_OPENAI_API_KEY` or `AZURE_OPENAI_AD_TOKEN` environment variables.
+2025-04-26 16:56:54,612 - app.main - INFO - Starting up Bibliotheca Chatbot API
+2025-04-26 16:56:57,783 - app.api.chat - INFO - Received chat request for org b781b517-8954-e811-2a94-0024e880a2b7 with session_id: None
+2025-04-26 16:56:57,783 - app.langchain.agent - INFO - Processing chat message for org b781b517-8954-e811-2a94-0024e880a2b7, session None. Original message: 'Compare the total successful borrows for the 'Main Branch' and the 'Argyle Branch' during the first week of February. Just tell me which branch had more.'
+2025-04-26 16:56:57,783 - app.langchain.agent - INFO - Initializing Azure OpenAI LLM with deployment di-gpt-4o-standard
+2025-04-26 16:56:57,957 - app.langchain.agent - INFO - Compiling LangGraph workflow...
+2025-04-26 16:56:57,961 - app.langchain.agent - INFO - LangGraph workflow compiled.
+2025-04-26 16:57:00,436 - app.langchain.agent - INFO - Tool handler: Found 1 operational tool calls.
+2025-04-26 16:57:00,448 - app.langchain.agent - INFO - Executing 1 operational tool calls... Names: ['hierarchy_name_resolver']
+2025-04-26 16:57:00,448 - app.langchain.agent - INFO - Executing tool: hierarchy_name_resolver with args: {'name_candidates': ['Main Branch', 'Argyle Branch']}
+2025-04-26 16:57:00,448 - app.langchain.tools.hierarchy_resolver_tool - INFO - Executing Hierarchy Name Resolver for org b781b517-8954-e811-2a94-0024e880a2b7 with candidates: ['Main Branch', 'Argyle Branch']
+2025-04-26 16:57:01,014 - app.langchain.tools.hierarchy_resolver_tool - DEBUG - Retrieved 22 hierarchy entries (org + direct children) for organization b781b517-8954-e811-2a94-0024e880a2b7.
+2025-04-26 16:57:01,030 - app.langchain.tools.hierarchy_resolver_tool - INFO - Resolved 'Main Branch' to 'Maxville Branch (MAX)' (ID: ca4b911c-8b54-e811-2a94-0024e880a2b7) with fuzzy score 86
+2025-04-26 16:57:01,041 - app.langchain.tools.hierarchy_resolver_tool - INFO - Resolved 'Argyle Branch' to 'Argyle Branch (AYL)' (ID: feb1a2dd-8a54-e811-2a94-0024e880a2b7) with fuzzy score 95
+2025-04-26 16:57:01,046 - app.langchain.tools.hierarchy_resolver_tool - DEBUG - Hierarchy name resolution completed. Result map: {'Main Branch': {'status': 'found', 'resolved_name': 'Maxville Branch (MAX)', 'id': 'ca4b911c-8b54-e811-2a94-0024e880a2b7', 'score': 86}, 'Argyle Branch': {'status': 'found', 'resolved_name': 'Argyle Branch (AYL)', 'id': 'feb1a2dd-8a54-e811-2a94-0024e880a2b7', 'score': 95}}
+2025-04-26 16:57:01,327 - app.langchain.agent - INFO - Tool 'hierarchy_name_resolver' execution completed successfully
+2025-04-26 16:57:03,077 - app.langchain.agent - INFO - Tool handler: Found 2 operational tool calls.
+2025-04-26 16:57:03,077 - app.langchain.agent - INFO - Executing 2 operational tool calls... Names: ['sql_query', 'sql_query']
+2025-04-26 16:57:03,079 - app.langchain.agent - INFO - Executing tool: sql_query with args: {'query_description': "Get total successful borrows for hierarchy ID 'ca4b911c-8b54-e811-2a94-0024e880a2b7' during the first week of February", 'db_name': 'report_management'}
+2025-04-26 16:57:03,079 - app.langchain.agent - INFO - Executing tool: sql_query with args: {'query_description': "Get total successful borrows for hierarchy ID 'feb1a2dd-8a54-e811-2a94-0024e880a2b7' during the first week of February", 'db_name': 'report_management'}
+2025-04-26 16:57:03,081 - app.langchain.tools.sql_tool - INFO - Executing SQL query tool for org b781b517-8954-e811-2a94-0024e880a2b7 with description: 'Get total successful borrows for hierarchy ID 'ca4b911c-8b54-e811-2a94-0024e880a2b7' during the first week of February'
+2025-04-26 16:57:03,082 - app.langchain.tools.sql_tool - INFO - Executing SQL query tool for org b781b517-8954-e811-2a94-0024e880a2b7 with description: 'Get total successful borrows for hierarchy ID 'feb1a2dd-8a54-e811-2a94-0024e880a2b7' during the first week of February'
+2025-04-26 16:57:03,126 - app.langchain.tools.sql_tool - DEBUG - Invoking SQL generation chain for org b781b517-8954-e811-2a94-0024e880a2b7 with query: Get total successful borrows for hierarchy ID 'ca4b911c-8b54-e811-2a94-0024e880a2b7' during the first week of February
+2025-04-26 16:57:03,126 - app.langchain.tools.sql_tool - DEBUG - Invoking SQL generation chain for org b781b517-8954-e811-2a94-0024e880a2b7 with query: Get total successful borrows for hierarchy ID 'feb1a2dd-8a54-e811-2a94-0024e880a2b7' during the first week of February
+2025-04-26 16:57:06,049 - app.langchain.tools.sql_tool - DEBUG - Raw LLM Output for SQL generation: {'sql': 'SELECT SUM("1") AS "Total Successful Borrows" FROM "5" WHERE "hierarchyId" = :hierarchy_id AND "organizationId" = :organization_id AND "eventTimestamp" >= DATE_TRUNC(\'year\', NOW()) + INTERVAL \'1 month\' AND "eventTimestamp" < DATE_TRUNC(\'year\', NOW()) + INTERVAL \'1 month\' + INTERVAL \'7 days\'', 'params': {'hierarchy_id': 'feb1a2dd-8a54-e811-2a94-0024e880a2b7', 'organization_id': 'b781b517-8954-e811-2a94-0024e880a2b7'}}
+2025-04-26 16:57:06,049 - app.langchain.tools.sql_tool - DEBUG - :organization_id (b781b517-8954-e811-2a94-0024e880a2b7) present and correct in LLM params.
+2025-04-26 16:57:06,049 - app.langchain.tools.sql_tool - DEBUG - Generated SQL: SELECT SUM("1") AS "Total Successful Borrows" FROM "5" WHERE "hierarchyId" = :hierarchy_id AND "organizationId" = :organization_id AND "eventTimestamp" >= DATE_TRUNC('year', NOW()) + INTERVAL '1 month' AND "eventTimestamp" < DATE_TRUNC('year', NOW()) + INTERVAL '1 month' + INTERVAL '7 days', Params: {'hierarchy_id': 'feb1a2dd-8a54-e811-2a94-0024e880a2b7', 'organization_id': 'b781b517-8954-e811-2a94-0024e880a2b7'}
+2025-04-26 16:57:06,109 - app.langchain.tools.sql_tool - DEBUG - SQL syntax parsed successfully.
+2025-04-26 16:57:06,109 - app.langchain.tools.sql_tool - DEBUG - Executing SQL for org b781b517-8954-e811-2a94-0024e880a2b7: SELECT SUM("1") AS "Total Successful Borrows" FROM "5" WHERE "hierarchyId" = :hierarchy_id AND "organizationId" = :organization_id AND "eventTimestamp" >= DATE_TRUNC('year', NOW()) + INTERVAL '1 month' AND "eventTimestamp" < DATE_TRUNC('year', NOW()) + INTERVAL '1 month' + INTERVAL '7 days'
+2025-04-26 16:57:06,109 - app.langchain.tools.sql_tool - DEBUG - With Parameters: {'hierarchy_id': 'feb1a2dd-8a54-e811-2a94-0024e880a2b7', 'organization_id': 'b781b517-8954-e811-2a94-0024e880a2b7'}
+2025-04-26 16:57:06,748 - app.langchain.tools.sql_tool - INFO - SQL query returned 1 rows for org b781b517-8954-e811-2a94-0024e880a2b7, description: 'Get total successful borrows for hierarchy ID 'feb1a2dd-8a54-e811-2a94-0024e880a2b7' during the first week of February'
+2025-04-26 16:57:06,748 - app.langchain.agent - INFO - Tool 'sql_query' execution completed successfully
+2025-04-26 16:57:07,389 - app.langchain.tools.sql_tool - DEBUG - Raw LLM Output for SQL generation: {'sql': 'SELECT SUM("1") AS "Total Successful Borrows" FROM "5" WHERE "hierarchyId" = :hierarchy_id AND "organizationId" = :organization_id AND "eventTimestamp" >= DATE_TRUNC(\'year\', NOW()) + INTERVAL \'1 month\' AND "eventTimestamp" < DATE_TRUNC(\'year\', NOW()) + INTERVAL \'1 month\' + INTERVAL \'7 days\'', 'params': {'hierarchy_id': 'ca4b911c-8b54-e811-2a94-0024e880a2b7', 'organization_id': 'b781b517-8954-e811-2a94-0024e880a2b7'}}
+2025-04-26 16:57:07,389 - app.langchain.tools.sql_tool - DEBUG - :organization_id (b781b517-8954-e811-2a94-0024e880a2b7) present and correct in LLM params.
+2025-04-26 16:57:07,389 - app.langchain.tools.sql_tool - DEBUG - Generated SQL: SELECT SUM("1") AS "Total Successful Borrows" FROM "5" WHERE "hierarchyId" = :hierarchy_id AND "organizationId" = :organization_id AND "eventTimestamp" >= DATE_TRUNC('year', NOW()) + INTERVAL '1 month' AND "eventTimestamp" < DATE_TRUNC('year', NOW()) + INTERVAL '1 month' + INTERVAL '7 days', Params: {'hierarchy_id': 'ca4b911c-8b54-e811-2a94-0024e880a2b7', 'organization_id': 'b781b517-8954-e811-2a94-0024e880a2b7'}
+2025-04-26 16:57:07,399 - app.langchain.tools.sql_tool - DEBUG - SQL syntax parsed successfully.
+2025-04-26 16:57:07,399 - app.langchain.tools.sql_tool - DEBUG - Executing SQL for org b781b517-8954-e811-2a94-0024e880a2b7: SELECT SUM("1") AS "Total Successful Borrows" FROM "5" WHERE "hierarchyId" = :hierarchy_id AND "organizationId" = :organization_id AND "eventTimestamp" >= DATE_TRUNC('year', NOW()) + INTERVAL '1 month' AND "eventTimestamp" < DATE_TRUNC('year', NOW()) + INTERVAL '1 month' + INTERVAL '7 days'
+2025-04-26 16:57:07,399 - app.langchain.tools.sql_tool - DEBUG - With Parameters: {'hierarchy_id': 'ca4b911c-8b54-e811-2a94-0024e880a2b7', 'organization_id': 'b781b517-8954-e811-2a94-0024e880a2b7'}
+2025-04-26 16:57:07,915 - app.langchain.tools.sql_tool - INFO - SQL query returned 1 rows for org b781b517-8954-e811-2a94-0024e880a2b7, description: 'Get total successful borrows for hierarchy ID 'ca4b911c-8b54-e811-2a94-0024e880a2b7' during the first week of February'
+2025-04-26 16:57:07,915 - app.langchain.agent - INFO - Tool 'sql_query' execution completed successfully
+2025-04-26 16:57:07,915 - app.langchain.agent - INFO - Extracted table from sql_query: 1 rows. Appending.
+2025-04-26 16:57:07,915 - app.langchain.agent - INFO - Extracted table from sql_query: 1 rows. Appending.
+2025-04-26 16:57:09,321 - app.langchain.agent - INFO - Agent decided on final response structure. Attempting to parse AIMessage.
+2025-04-26 16:57:09,323 - app.langchain.agent - INFO - Successfully parsed FinalApiResponseStructure: text='During the first week of February, the Argyle Branch had more successful borrows with a total of 1020, compared to the Maxville Branch, which had 157 successful borrows.' include_tables=[False, False] include_visualizations=[]
+2025-04-26 16:57:09,323 - app.langchain.agent - INFO - Successfully obtained FinalApiResponseStructure: text='During the first week of February, the Argyle Branch had more successful borrows with a total of 1020, compared to the Maxville Branch, which had 157 successful borrows.', include_tables=[False, False], include_visualizations=[]
+2025-04-26 16:57:09,323 - app.langchain.agent - INFO - Final response includes 0 tables and 0 visualizations.
+2025-04-26 16:57:09,323 - app.langchain.agent - INFO - Successfully processed chat message. Response keys: ['text']
+2025-04-26 17:00:38,535 - app.main - INFO - Starting up Bibliotheca Chatbot API

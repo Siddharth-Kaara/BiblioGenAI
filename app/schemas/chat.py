@@ -12,7 +12,7 @@ class ChatMessage(BaseModel):
 
 class ChatRequest(BaseModel):
     """Request schema for the chat endpoint."""
-    user_id: str = Field(..., description="Unique identifier for the user")
+    # user_id: str = Field(..., description="Unique identifier for the user") # Removed
     organization_id: str = Field(..., description="Unique identifier for the user's organization to scope data access")
     message: str = Field(..., description="The user's message")
     session_id: Optional[str] = Field(None, description="Session identifier for conversation tracking")

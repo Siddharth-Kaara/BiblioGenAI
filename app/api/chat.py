@@ -21,7 +21,8 @@ router = APIRouter()
 async def chat(request: ChatRequest):
     """Processes a chat message using the LangGraph agent and returns a response."""
     try:
-        logger.info(f"Received chat request from user {request.user_id} with session_id: {request.session_id}")
+        # logger.info(f"Received chat request from user {request.user_id} with session_id: {request.session_id}")
+        logger.info(f"Received chat request for org {request.organization_id} with session_id: {request.session_id}")
 
         # The LangGraph agent now handles memory via session_id internally.
         # We pass the necessary info directly to process_chat_message.
@@ -29,7 +30,7 @@ async def chat(request: ChatRequest):
 
         # Process the message using the refactored function
         api_response_dict = await process_chat_message(
-            user_id=request.user_id,
+            # user_id=request.user_id, # Removed
             organization_id=request.organization_id,
             message=request.message,
             session_id=request.session_id, # Pass session_id directly
@@ -57,7 +58,7 @@ async def chat(request: ChatRequest):
         # Return it directly, maybe with a 500 status code, although response_model handles structure
         # Consider raising HTTPException for clearer status codes if needed, but
         # returning the ChatResponse structure ensures consistency.
-        # For now, just return the structured error within a 200 OK, 
+        # For now, just return the structured error within a 200 OK,
         # as process_chat_message also returns errors this way.
         return error_response
         # Alternative: Raise HTTPException for non-200 status

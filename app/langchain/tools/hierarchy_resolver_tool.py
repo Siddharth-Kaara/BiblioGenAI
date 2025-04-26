@@ -15,32 +15,33 @@ logger = logging.getLogger(__name__)
 # --- Input Schema ---
 class HierarchyResolverInput(BaseModel):
     name_candidates: List[str] = Field(description="A list of potential hierarchy names (e.g., branch names, library names) mentioned by the user.")
-    organization_id: str = Field(description="The specific organization ID to scope the hierarchy search.")
+    # organization_id: str = Field(description="The specific organization ID to scope the hierarchy search.") # Removed - Tool uses internal context
     # Optional: Add a threshold if you want the agent to control it, otherwise use a default
     # min_score_threshold: int = Field(default=85, description="Minimum confidence score (0-100) to consider a match valid.")
 
 # --- Tool Implementation ---
 class HierarchyNameResolverTool(BaseTool):
     """Tool to resolve potentially fuzzy user-provided hierarchy names (like branches, libraries)
-    against the exact names stored in the 'hierarcyCaches' table for a specific organization.
+    against the exact names stored in the 'hierarcyCaches' table for the organization associated with the request context.
     It uses fuzzy matching to find the best match and returns the exact database name, ID, and matching score."""
     name: str = "hierarchy_name_resolver"
     description: str = (
         "Resolves user-provided hierarchy entity names (e.g., 'Main Library', 'Argyle') against the exact names "
-        "in the database for a specific organization ID. Use this *before* querying data if the user mentions "
+        "in the database for the relevant organization. Use this *before* querying data if the user mentions "
         "specific branches, libraries, or other hierarchy entities by name. Returns a mapping of input names "
         "to their resolved database name, ID, and matching score."
     )
     args_schema: Type[BaseModel] = HierarchyResolverInput
-    # Consistent with other tools, though not strictly needed for the query itself
-    user_id: str
-    organization_id: str # Passed during instantiation for context, though the actual org_id comes from args
+    # user_id: str # Removed
+    organization_id: str # Passed during instantiation for context, **used internally**
     min_score_threshold: int = 85
     db_name: str = "report_management" # Assume we always use this DB for hierarchy
 
-    def _run(self, name_candidates: List[str], organization_id: str, **kwargs: Any) -> Dict[str, Any]:
+    def _run(self, name_candidates: List[str], **kwargs: Any) -> Dict[str, Any]: # Removed organization_id param
         """Synchronous execution. Mirrors the pattern in SQLQueryTool."""
         logger.warning("Running HierarchyNameResolverTool synchronously.")
+        # Use self.organization_id from the tool's context
+        org_id_to_use = self.organization_id
         engine = get_db_engine(self.db_name)
         if not engine:
             logger.error(f"Database engine for '{self.db_name}' not found for sync execution.")
@@ -49,14 +50,17 @@ class HierarchyNameResolverTool(BaseTool):
         try:
             # Get connection using context manager, same as sql_tool
             with engine.connect() as connection:
-                 return self._execute_logic(connection, name_candidates, organization_id)
+                 # Pass the organization_id from the tool's internal state
+                 return self._execute_logic(connection, name_candidates, org_id_to_use)
         except Exception as e:
             logger.error(f"Error during synchronous hierarchy resolution: {e}", exc_info=True)
             return self._format_error_output(f"Failed during sync execution: {str(e)}", name_candidates)
 
-    async def _arun(self, name_candidates: List[str], organization_id: str, **kwargs: Any) -> Dict[str, Any]:
+    async def _arun(self, name_candidates: List[str], **kwargs: Any) -> Dict[str, Any]: # Removed organization_id param
         """Resolve names asynchronously. Mirrors the pattern in SQLQueryTool's _run method structure."""
-        logger.info(f"Executing Hierarchy Name Resolver for org {organization_id} with candidates: {name_candidates}")
+        # Use self.organization_id from the tool's context for logging and execution
+        org_id_to_use = self.organization_id
+        logger.info(f"Executing Hierarchy Name Resolver for org {org_id_to_use} with candidates: {name_candidates}")
         engine = get_db_engine(self.db_name)
         if not engine:
             logger.error(f"Database engine for '{self.db_name}' not found.")
@@ -65,13 +69,14 @@ class HierarchyNameResolverTool(BaseTool):
         try:
             # Use engine.connect() within context manager - works with asyncpg driver
             with engine.connect() as connection:
-                # Pass the connection object, not the engine
-                return self._execute_logic(connection, name_candidates, organization_id)
+                # Pass the connection object and the organization_id from the tool's internal state
+                return self._execute_logic(connection, name_candidates, org_id_to_use)
         except Exception as e:
             logger.error(f"Error during async hierarchy resolution: {e}", exc_info=True)
             return self._format_error_output(f"Failed during async execution: {str(e)}", name_candidates)
 
     # Renamed helper function for clarity, now takes the Connection object
+    # Signature remains the same, it receives the org_id from _run/_arun
     def _execute_logic(self, connection: Connection, name_candidates: List[str], organization_id: str) -> Dict[str, Any]:
         """Core logic to fetch data and perform fuzzy matching using a SQLAlchemy Connection."""
         resolved_map: Dict[str, Dict[str, Any]] = {}

@@ -27,8 +27,8 @@ The Bibliotheca Chatbot API is a production-grade FastAPI application that proce
 ┌─────────────────┐      ┌───────────────────────┐      ┌─────────────────┐
 │   FastAPI API   │◄────►│ LangGraph App         │◄────►│ PostgreSQL DBs  │
 └─────────────────┘      │ (Agent + Tool Nodes)  │      └─────────────────┘
-                       │ (w/ Memory)           │
-                       └───────────┬───────────┘
+                         │ (w/ Memory)           │
+                         └───────────┬───────────┘
                                    │ ▲
       ┌────────────────────────────▼─┴───────────────────────────┐
       │ Tool Execution (Nodes: tools, resolve_hierarchy)        │

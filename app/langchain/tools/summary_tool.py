@@ -24,7 +24,6 @@ class SummarySynthesizerTool(BaseTool):
     Input should be a description of the summary or analysis needed.
     """
     
-    user_id: str
     organization_id: str
     
     def _decompose_query(self, query: str) -> List[str]:
@@ -93,8 +92,8 @@ class SummarySynthesizerTool(BaseTool):
         """Execute each subquery and collect results."""
         results = []
         
-        # Create SQL tool, passing organization_id
-        sql_tool = SQLQueryTool(user_id=self.user_id, organization_id=self.organization_id)
+        # Create SQL tool, passing only organization_id
+        sql_tool = SQLQueryTool(organization_id=self.organization_id)
         
         for subquery in subqueries:
             try:
@@ -174,7 +173,7 @@ class SummarySynthesizerTool(BaseTool):
     
     def _run(self, query: str) -> Dict[str, str]:
         """Run the tool to generate a summary string."""
-        logger.info(f"Executing summary synthesizer tool for user {self.user_id}, org {self.organization_id}")
+        logger.info(f"Executing summary synthesizer tool for org {self.organization_id}")
         
         # Decompose the query
         subqueries = self._decompose_query(query)

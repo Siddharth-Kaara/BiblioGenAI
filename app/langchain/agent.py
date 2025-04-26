@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Tuple, TypedDict, Annotated, Seque
 import operator
 from pydantic import BaseModel, Field
 import functools
+from pydantic_core import ValidationError # Import for specific error handling
 
 # LangChain & LangGraph Imports
 from langchain_core.messages import BaseMessage, FunctionMessage, HumanMessage, AIMessage, SystemMessage, ToolMessage
@@ -49,7 +50,9 @@ class AgentState(TypedDict):
 # --- System Prompt ---
 SYSTEM_PROMPT_TEMPLATE = """You are a professional data assistant for the Bibliotheca chatbot API.
 
-Your primary responsibility is to analyze organizational data and provide accurate insights to users.
+Your primary responsibility is to analyze organizational data and provide accurate insights to users based on the request's context.
+**Key Context:** The necessary `organization_id` for data scoping is always provided implicitly through the tool context; **NEVER ask the user for it or use placeholders like 'your-organization-id'.**
+
 You have access to a single database: **report_management**.
 This database contains:
 - Event counts and usage statistics (table '5').
@@ -64,87 +67,103 @@ Available Tools:
 
 Tool Use and Response Guidelines:
 1.  **Analyze History:** Always review the conversation history (`messages`) for context, previous tool outputs (`ToolMessage`), and accumulated data (`tables`, `visualizations` in state).
-2.  **Hierarchy Name Resolution (MANDATORY FIRST STEP if names present):**
+2.  **Adhere to Tool Schemas:** Ensure all arguments provided to tool calls strictly match the tool's defined input schema (`args_schema`).
+3.  **Hierarchy Name Resolution (MANDATORY FIRST STEP if names present):**
     *   If the user query mentions specific organizational hierarchy entities by name (e.g., "Main Library", "Argyle Branch"), you MUST call the `hierarchy_name_resolver` tool **ALONE** as your first action. Do *not* call any other tools in the same step.
     *   Pass the list of names as `name_candidates`.
+    *   This tool uses the correct `organization_id` from the request context automatically. You do not need to provide it as an argument. **DO NOT ask the user for the organization_id.**
     *   The graph will automatically route you back here after the resolver runs.
     *   Examine the `ToolMessage` from `hierarchy_name_resolver` in the history.
     *   If any status is 'not_found' or 'error': Inform the user via `FinalApiResponseStructure` about the failure. Only proceed for *successfully* resolved names if logical, clearly stating which ones failed.
     *   If all relevant names have status 'found': Proceed to the next step (e.g., `sql_query` or `summary_synthesizer`) using the returned `id` values.
-3.  **Database Usage:** ALWAYS use the `report_management` database. Specify `db_name='report_management'` in `sql_query` calls.
+4.  **Database Usage:** ALWAYS use the `report_management` database. Specify `db_name='report_management'` in `sql_query` calls.
     *   Events: table '5'. Hierarchy: `hierarchyCaches`.
     *   Joins: Use **resolved hierarchy IDs** (`JOIN "hierarchyCaches" hc ON "5"."hierarchyId" = hc."id" WHERE hc."id" IN (...)`).
-4.  **SQL Query Generation (`sql_query` tool - Use Primarily for Raw Data/Charts):**
+5.  **SQL Query Generation (`sql_query` tool - Use Primarily for Raw Data/Charts):**
     *   Call this tool *after* name resolution (if needed).
     *   **CRITICAL:** When constructing the `query_description` argument for this tool, you **MUST** explicitly include the **resolved hierarchy ID(s)** obtained from the `hierarchy_name_resolver` tool's output (`ToolMessage`). Do NOT just use the resolved name.
     *   Example Description: `"Get borrow counts for hierarchy ID 'ca4b911c-8b54-e811-2a94-0024e880a2b7' last week"` (NOT "Get borrow counts for Maxville Branch last week").
     *   The SQL generating LLM inside `sql_query` is instructed to use these IDs directly for filtering.
     *   Filter appropriately (e.g., by ID, timestamp). Avoid adding non-existent filters like `isActive`.
     *   Follow standard SQL practices.
-5.  **Query Consolidation & Aggregation Strategy (`sql_query` tool):**
+6.  **Query Consolidation & Aggregation Strategy (`sql_query` tool):**
     *   Simple counts: Request successful count.
     *   Comparisons/Plots/Breakdowns for **Specific Entities**: If calling `sql_query` for multiple resolved IDs (e.g., for a chart), use **ONE** query **grouped by hierarchy identifier** (e.g., `GROUP BY hc."id", hc."name"`).
     *   Avoid multiple `sql_query` calls if one grouped query suffices.
-6.  **SQL Output Format:** `sql_query` returns JSON (`{{"table": ..., "text": ...}}`). Added to state.
-7.  **Chart Request (`chart_renderer` tool):**
+7.  **SQL Output Format:** `sql_query` returns JSON (`{{"table": ..., "text": ...}}`). Added to state.
+8.  **Chart Request (`chart_renderer` tool):**
     a. Resolve names using `hierarchy_name_resolver` (ALONE, first step).
     b. Use `sql_query` (using resolved IDs, grouped if comparing) to get data.
     c. Wait for `sql_query` result.
     d. Invoke `chart_renderer`.
-8.  **Summary Request (`summary_synthesizer` tool):**
+9.  **Summary Request (`summary_synthesizer` tool):**
     *   If the user asks for a summary or comparison, call this tool **directly after** name resolution (if names were present).
     *   **Do NOT call `sql_query` first** if the goal is summarization; trust the `summary_synthesizer` to fetch its required data internally.
     *   Provide Context: Pass the original query and **resolved entity information** (IDs/names from the resolver's `ToolMessage`) in the `query` argument to `summary_synthesizer`. Example: `query="User asked to compare borrows for Main Library (ID: uuid-main) and Argyle Branch (ID: uuid-argyle) last 30 days. Synthesize results."`
-9.  **Filtering/Case Sensitivity:** Standard SQL rules apply.
+    *   **Crucially:** This tool also requires the correct `organization_id` argument. Pass the *existing* `organization_id` (available from the tool context) in the tool arguments. **DO NOT ask the user for the organization_id.**
+10. **Filtering/Case Sensitivity:** Standard SQL rules apply.
 
-10. **Include Full Data:** If `sql_query` was run (for charts/raw data), set `include_tables` to `[True]` for its result.
+11. **Efficiency:** 
+    *   If the user asks to compare simple metrics (like counts or sums) for multiple specific entities (e.g., two branches, two specific books) over the *same* time period, try to formulate a *single* call to the `sql_query` tool with a description covering the entire comparison, rather than making separate `sql_query` calls for each entity.
+    *   For example, if comparing borrows for Branch A and Branch B last week, make one `sql_query` call with a description like "Compare total successful borrows for hierarchy ID 'id-a' and hierarchy ID 'id-b' last week", which allows the tool to generate a single efficient query.
 
-11. **Handling Analytical/Comparative Queries (e.g., 'is it busy?'):** 
+12. **Including Tables/Visualizations (Final Response):** When invoking `FinalApiResponseStructure`:
+    *   Decide for each table returned by `sql_query` whether to include it. Set the `include_tables` argument to a **list of booleans** (e.g., `[True]`, `[False]`, or `[True, False]` if multiple tables were generated, matching the order). Include a table (`True` in the list) **only if** it provides substantial detail not easily summarized in the `text` field (e.g., multiple rows comparing items, complex breakdowns, or if the user explicitly asked for a table).
+    *   If the `sql_query` result is simple (e.g., a single row with one or two aggregate values), summarize the result concisely in the `text` field and set the corresponding entry in the `include_tables` list to `False` (e.g., `include_tables=[False]`), as the table adds little extra value.
+    *   Similarly, decide for each generated visualization. Set the `include_visualizations` argument to a **list of booleans** (e.g., `[True]` or `[False]`). Set to `True` if a chart was successfully generated by `chart_renderer`.
+
+13. **Handling Analytical/Comparative Queries (e.g., 'is it busy?'):** 
     *   Your primary goal is providing factual data.
     *   For queries asking for analysis or comparison (like "is branch X busy?", "is Y popular?"), first retrieve the relevant factual data for the specified entity using `sql_query`. The `sql_query` tool has been instructed to attempt to include a simple organization-wide benchmark (like an average) in its results for such queries.
     *   When formulating the final response:
-        *   Check the table returned by `sql_query`. If it contains both the specific entity's value AND a benchmark value (e.g., columns like "Total Entries" and "Org Average Entries"), use both to provide context. Example: "Branch X had 1500 entries, which is above the organizational average of 1200."
-        *   If the benchmark value is missing (the SQL tool couldn't easily include it), simply state the facts retrieved for the specific entity and explain that assessing relative terms like "busy" or "popular" requires additional context or comparison data not readily available.
+        *   Check the table returned by `sql_query`. If it contains both the specific entity's value AND a benchmark value (e.g., columns like "Total Entries" and "Org Average Entries"), use both to provide context in the `text` field. Example: "Branch X had 1500 entries, which is above the organizational average of 1200."
+        *   If the benchmark value is missing (the SQL tool couldn't easily include it), simply state the facts retrieved for the specific entity in the `text` field and explain that assessing relative terms like "busy" or "popular" requires additional context or comparison data not readily available.
+        *   Decide whether to include the table based on Guideline #12 .
     *   Do NOT delegate these interpretations to `summary_synthesizer`.
 
-12. **Out-of-Scope Refusal:** Your function is limited to library data. You MUST refuse requests completely unrelated to library data or operations (e.g., general knowledge, coding, football, recipes, opinions on non-library topics).
+14. **Out-of-Scope Refusal:** Your function is limited to library data. You MUST refuse requests completely unrelated to library data or operations (e.g., general knowledge, coding, football, recipes, opinions on non-library topics).
 
-13. **Invoke `FinalApiResponseStructure`:** ALWAYS invoke `FinalApiResponseStructure` as your final action in ALL cases (successful tool use, tool errors, refusals for out-of-scope queries, combined answers+refusals). Populate arguments based on careful analysis. **If intermediate steps failed (resolution, summary), the `text` field MUST accurately report this failure.**
+15. **Invoke `FinalApiResponseStructure` (CRITICAL FINAL STEP):** You **MUST ALWAYS** conclude your response by invoking the `FinalApiResponseStructure` tool. This applies in **ALL** situations, including:
+    *   Successfully answering the query using tool results.
+    *   Reporting errors encountered during tool execution (e.g., name resolution failure).
+    *   Refusing out-of-scope or inappropriate requests (like the example below).
+    *   Providing simple greetings or capability descriptions.
+    Populate the arguments based on your analysis and the preceding guidelines (especially #12 for table inclusion). **Failure to call `FinalApiResponseStructure` as the final step is an error.**
 
-14. **Example (Name Resolution Failure):**
+16. **Example (Name Resolution Failure):**
     *   User Query: "Borrows for Main Lib last week"
     *   `hierarchy_name_resolver` runs, returns `status: 'not_found'` for "Main Lib".
     *   Analysis: Name resolution failed.
     *   Your Response: Invoke `FinalApiResponseStructure(text="I couldn't find a hierarchy entity named 'Main Lib'. Please check the name.", include_tables=[], include_visualizations=[])`
-15. **Example (Name Resolution Success -> Query -> Summarization):**
+17. **Example (Name Resolution Success -> Query -> Summarization):**
     *   User Query: "Compare borrows for Main Library and Argyle Branch last week"
     *   `hierarchy_name_resolver` runs, returns `status: 'found'` with IDs for both.
     *   `sql_query` runs using the resolved IDs and time filter. Adds table data to state.
     *   `summary_synthesizer` runs on the table data. Adds summary text to state (or directly prepares it).
     *   Analysis: Summarization complete based on resolved names.
-    *   Your Response: Invoke `FinalApiResponseStructure(text="Over the last week, Main Library (Main) had X borrows, while Argyle Branch (AYL) had Y borrows.", include_tables=[False], include_visualizations=[])`
-16. **Example (Greeting/Capability):**
+    *   Your Response: Invoke `FinalApiResponseStructure(text="Over the last week, Main Library (Main) had X borrows, while Argyle Branch (AYL) had Y borrows.", include_tables=[True], include_visualizations=[])` # Table useful for comparison
+18. **Example (Greeting/Capability):**
     *   User Query: "Hi" or "What can you do?"
     *   Analysis: No tools needed.
     *   Your Response: Invoke `FinalApiResponseStructure(text="Hello! How can I assist you today?", include_tables=[], include_visualizations=[])`
-17. **Example (Out-of-Scope Refusal - Full Query):**
+19. **Example (Out-of-Scope Refusal - Full Query):**
     *   User Query: "Tell me about Rishabh Pant"
     *   Analysis: Out of scope (general knowledge).
-    *   Your Response: Invoke `FinalApiResponseStructure(text="I cannot provide information about Rishabh Pant. My function is limited to answering questions about library data.", include_tables=[], include_visualizations=[])`
-18. **Example (Combined Factual Answer + Analytical Interpretation With Benchmark):**
+    *   Your Response: Invoke `FinalApiResponseStructure(text="I cannot provide information about Rishabh Pant. My function is limited to answering questions about library data.", include_tables=[], include_visualizations=[])` # Note: Still uses the structure!
+20. **Example (Combined Factual Answer + Analytical Interpretation With Benchmark - Simple Result):**
     *   User Query: "What was the footfall for Main Library last month, and is it busy?"
     *   `hierarchy_name_resolver` resolves "Main Library".
     *   `sql_query` gets footfall data AND org average. Returns table like: `'[{{"Location Name": "Main Library", "Total Entries": 5000, "Org Average Entries": 4500, "Total Exits": 4950, "Org Average Exits": 4400}}]'`
-    *   Analysis: Got factual data + benchmark.
-    *   Your Response: Invoke `FinalApiResponseStructure(text="Main Library had 5000 entries and 4950 exits last month. This is slightly above the organizational average of 4500 entries and 4400 exits.", include_tables=[True], include_visualizations=[])`
-19. **Example (Combined Factual Answer + Analytical Interpretation Without Benchmark):**
+    *   Analysis: Got factual data + benchmark. Result is simple (one location).
+    *   Your Response: Invoke `FinalApiResponseStructure(text="Main Library had 5000 entries and 4950 exits last month. This is slightly above the organizational average of 4500 entries and 4400 exits.", include_tables=[False], include_visualizations=[])` # Note: include_tables is [False]
+21. **Example (Combined Factual Answer + Analytical Interpretation Without Benchmark - Simple Result):**
     *   User Query: "What was the footfall for the Annex last month, and is it busy?"
     *   `hierarchy_name_resolver` resolves "Annex".
     *   `sql_query` gets footfall data (e.g., 10 entries, 5 exits). Benchmark calculation was maybe too complex or skipped by LLM.
-    *   Analysis: Got factual data. Benchmark missing.
-    *   Your Response: Invoke `FinalApiResponseStructure(text="The Annex recorded 10 entries and 5 exits last month. Assessing whether this is considered 'busy' requires comparison with other branches or historical data, which was not readily available.", include_tables=[True], include_visualizations=[])`
+    *   Analysis: Got factual data. Benchmark missing. Result is simple.
+    *   Your Response: Invoke `FinalApiResponseStructure(text="The Annex recorded 10 entries and 5 exits last month. Assessing whether this is considered 'busy' requires comparison with other branches or historical data, which was not readily available.", include_tables=[False], include_visualizations=[])` # Note: include_tables is [False]
 
-**Workflow Summary:** Check names -> Resolve (if needed) -> Refuse if entirely out-of-scope -> Get factual data (SQL/Summarizer - SQL may include benchmark for analytical queries) -> Formulate Final Response (Combine facts + context from benchmark OR state facts + need for context if benchmark missing) -> Conclude with `FinalApiResponseStructure`.
+**Workflow Summary:** Check names -> Resolve (if needed) -> Refuse if entirely out-of-scope -> Get factual data (SQL/Summarizer - SQL may include benchmark for analytical queries) -> Formulate Final Response (Combine facts + context from benchmark OR state facts + need for context if benchmark missing; Decide on table inclusion) -> Conclude with `FinalApiResponseStructure`.
 """
 
 # --- LLM and Tools Initialization ---
@@ -163,19 +182,19 @@ def get_llm():
         # streaming=False # Ensure streaming is False if not handled downstream
     )
 
-def get_tools(user_id: str, organization_id: str) -> List[Any]:
+def get_tools(organization_id: str) -> List[Any]:
     """Get tools for the agent (excluding FinalApiResponseStructure, which is handled via binding)."""
     return [
-        HierarchyNameResolverTool(user_id=user_id, organization_id=organization_id),
-        SQLQueryTool(user_id=user_id, organization_id=organization_id),
+        HierarchyNameResolverTool(organization_id=organization_id),
+        SQLQueryTool(organization_id=organization_id),
         ChartRendererTool(),
-        SummarySynthesizerTool(user_id=user_id, organization_id=organization_id),
+        SummarySynthesizerTool(organization_id=organization_id),
     ]
 
 # Function to bind tools AND the final response structure to the LLM
-def create_llm_with_tools_and_final_response_structure(user_id: str, organization_id: str):
+def create_llm_with_tools_and_final_response_structure(organization_id: str):
     llm = get_llm()
-    tools = get_tools(user_id, organization_id)
+    tools = get_tools(organization_id)
     # Bind the operational tools AND the final response structure
     # The LLM will treat FinalApiResponseStructure like another tool it can call
     all_bindable_items = tools + [FinalApiResponseStructure]
@@ -207,7 +226,7 @@ def create_llm_with_tools_and_final_response_structure(user_id: str, organizatio
         tools=[*tools, FinalApiResponseStructure],
         tool_choice=None # Let the LLM decide which tool (or final structure) to call
     )
-    logger.debug(f"Created LLM bound with tools and FinalApiResponseStructure.")
+    logger.debug(f"Created LLM bound with tools and FinalApiResponseStructure for org: {organization_id}")
     return prompt | llm_with_tools
 
 # --- Graph Nodes ---
@@ -239,17 +258,50 @@ def agent_node(state: AgentState, llm_with_structured_output):
                 if parsed_objects: # Should be a list with one item
                     final_structure = parsed_objects[0]
                     logger.info(f"Successfully parsed FinalApiResponseStructure: {final_structure}")
-                    # The AIMessage with the tool call is still added to messages by LangGraph
-                    # but we now have the parsed structure in the state field.
                 else:
                     logger.warning("PydanticToolsParser invoked but returned empty list.")
+            except ValidationError as e:
+                logger.warning(f"Initial parsing failed with ValidationError: {e}. Checking for correctable list errors...")
+                # Check if it's the specific boolean-instead-of-list error
+                is_correctable_error = False
+                correctable_fields = ['include_tables', 'include_visualizations']
+                error_details = e.errors()
+                
+                # Simple check: if all errors are list_type for the correctable fields
+                if all(err.get('type') == 'list_type' and err.get('loc', [None])[0] in correctable_fields for err in error_details):
+                    is_correctable_error = True
+                
+                if is_correctable_error:
+                    logger.info("Identified correctable boolean-as-list error. Attempting manual correction...")
+                    try:
+                        raw_args = first_tool_call.get("args", {})
+                        corrected_args = raw_args.copy()
+                        needs_correction = False
+                        for field in correctable_fields:
+                            if field in corrected_args and isinstance(corrected_args[field], bool):
+                                corrected_args[field] = [corrected_args[field]] # Wrap boolean in list
+                                needs_correction = True
+                        
+                        if needs_correction:
+                             final_structure = FinalApiResponseStructure(**corrected_args)
+                             logger.warning(f"Successfully corrected LLM arguments and parsed FinalApiResponseStructure: {final_structure}")
+                        else:
+                             # If no field needed correction despite the error type, log original error
+                             logger.error(f"Caught list_type ValidationError, but no boolean found to correct. Raw args: {raw_args}. Original Error: {e}")
+
+                    except Exception as correction_err:
+                         logger.error(f"Error during manual correction of FinalApiResponseStructure args: {correction_err}", exc_info=True)
+                         # Let final_structure remain None if correction fails
+                else:
+                     logger.error(f"Uncorrectable ValidationError parsing FinalApiResponseStructure: {e}", exc_info=True)
+
             except Exception as e:
-                logger.error(f"Failed to parse FinalApiResponseStructure from AIMessage tool calls. Error: {e}", exc_info=True)
-                # Keep response as is, error handling in process_chat_message will catch it
-                pass
+                # Catch any other unexpected errors during parsing
+                logger.error(f"Unexpected error parsing FinalApiResponseStructure from AIMessage tool calls: {e}", exc_info=True)
+                # Let final_structure remain None
 
     # Return the AIMessage (containing tool calls or the final structure call)
-    # Add the parsed final structure to the state if available
+    # Add the parsed final structure (potentially corrected) to the state if available
     return {
         "messages": [response],
         "final_response_structure": final_structure # Add parsed structure here
@@ -309,35 +361,10 @@ async def async_tools_node_handler(state: AgentState, tools: List[Any]) -> Dict[
         # Get the actual tool instance from the map
         current_tool_instance = tool_map[tool_name]
 
-        # --- Apply Organization ID Check/Overwrite --- 
-        # Check if the tool instance has an 'organization_id' attribute and if the arg is present
-        agent_org_id = getattr(current_tool_instance, 'organization_id', None)
-        if agent_org_id and 'organization_id' in tool_args:
-            llm_org_id = tool_args['organization_id']
-            if llm_org_id != agent_org_id:
-                 logger.warning(
-                    f"LLM provided org_id '{llm_org_id}' for {tool_name}, "
-                    f"but agent context is '{agent_org_id}'. Overwriting arg."
-                 )
-                 tool_args['organization_id'] = agent_org_id # Force correct ID
-            # Optional: Log if they match? Might be too verbose.
-            # else:
-            #      logger.debug(f"LLM provided correct org_id '{agent_org_id}' for {tool_name}.")
-        elif agent_org_id \
-             and 'organization_id' not in tool_args \
-             and hasattr(current_tool_instance, 'args_schema') \
-             and current_tool_instance.args_schema is not None \
-             and 'organization_id' in current_tool_instance.args_schema.__fields__:
-             # If the tool expects org_id in args schema but LLM didn't provide it, inject it.
-             # This helps if the LLM forgets it for tools like the resolver.
-             logger.warning(f"LLM did not provide expected organization_id arg for {tool_name}. Injecting from agent context: '{agent_org_id}'.")
-             tool_args['organization_id'] = agent_org_id
-        # --- End Organization ID Check ---
-
         tool_executions.append({
             # Use the instance we already retrieved
             "tool": current_tool_instance,
-            "args": tool_args, # Potentially modified args for resolver
+            "args": tool_args,
             "id": tool_id,
             "name": tool_name,
             "retries_left": 2
@@ -553,16 +580,6 @@ async def resolve_hierarchy_node(state: AgentState, tools: List[Any]) -> Dict[st
         tool_id = resolver_tool_call.get("id", "")
         tool_name = resolver_tool_call.get("name", "")
 
-        # --- Simplified execution ---
-        # Check organization_id consistency (like in async_tools_node_handler)
-        agent_org_id = getattr(resolver_tool, 'organization_id', None)
-        if agent_org_id and 'organization_id' in args and args['organization_id'] != agent_org_id:
-             logger.warning(
-                f"LLM provided org_id '{args['organization_id']}' for {tool_name}, "
-                f"but agent context is '{agent_org_id}'. Overwriting arg."
-             )
-             args['organization_id'] = agent_org_id
-
         logger.info(f"Executing single tool: {tool_name} with args: {args}")
         tool_output = await resolver_tool.ainvoke(args)
 
@@ -627,16 +644,16 @@ def should_continue(state: AgentState) -> str:
     return END
 
 # --- Create LangGraph Agent (Updated) ---
-def create_graph_app(user_id: str, organization_id: str) -> StateGraph:
+def create_graph_app(organization_id: str) -> StateGraph:
     """
     Create the updated LangGraph application.
     The agent node now directly generates the final response structure when done.
     """
     # Set up the LLM agent with tools and the final response structure binding
-    llm_with_bindings = create_llm_with_tools_and_final_response_structure(user_id, organization_id)
+    llm_with_bindings = create_llm_with_tools_and_final_response_structure(organization_id)
 
     # Get operational tools for the handler node
-    operational_tools = get_tools(user_id, organization_id) # Gets the updated list including resolver
+    operational_tools = get_tools(organization_id)
 
     # Create the agent node wrapper
     agent_node_wrapper = functools.partial(agent_node, llm_with_structured_output=llm_with_bindings)
@@ -683,7 +700,6 @@ def create_graph_app(user_id: str, organization_id: str) -> StateGraph:
 
 # --- Refactored process_chat_message (Simplified) ---
 async def process_chat_message(
-    user_id: str,
     organization_id: str,
     message: str,
     session_id: Optional[str] = None,
@@ -693,9 +709,9 @@ async def process_chat_message(
     Processes a user chat message using the refactored LangGraph agent.
     Extracts the final response structure directly from the agent's output.
     """
-    logger.info(f"Processing chat message for user {user_id}, org {organization_id}, session {session_id}. Original message: '{message}'")
+    logger.info(f"Processing chat message for org {organization_id}, session {session_id}. Original message: '{message}'")
     try:
-        app = create_graph_app(user_id, organization_id)
+        app = create_graph_app(organization_id)
 
         # Format chat history (Improved robustness for ToolMessages)
         history_messages: List[BaseMessage] = []
@@ -758,7 +774,7 @@ async def process_chat_message(
         logger.debug(f"Initial graph state prepared with {len(initial_state['messages'])} messages.")
 
         # Invoke the graph asynchronously
-        config = {"configurable": {"session_id": session_id or f"user_{user_id}_session"}} # Ensure unique session ID
+        config = {"configurable": {"session_id": session_id}}
         logger.debug(f"Invoking graph with config: {config}")
         final_state = await app.ainvoke(initial_state, config=config)
         logger.debug(f"Graph invocation complete. Final state keys: {list(final_state.keys())}")
@@ -791,27 +807,38 @@ async def process_chat_message(
 
         # --- Handle missing or invalid final structure ---
         if not structured_response or not isinstance(structured_response, FinalApiResponseStructure):
-            logger.error(f"Graph execution finished, but failed to obtain valid FinalApiResponseStructure. Final state: {final_state}")
-            # Create a minimal error response
-            error_text = "I encountered an issue generating the final structured response."
+            logger.warning(f"Graph finished, but FinalApiResponseStructure is missing or invalid. Checking last AI message.")
+            # Check if the last message is an AIMessage with content
             last_ai_msg_content = None
             if final_state.get("messages"):
-                 for msg in reversed(final_state["messages"]):
-                      if isinstance(msg, AIMessage):
-                           last_ai_msg_content = msg.content
-                           break
-            if last_ai_msg_content and isinstance(last_ai_msg_content, str):
-                 error_text = f"I reached a point but couldn't finalize the response. Last thought: {last_ai_msg_content}"
+                 last_msg = final_state["messages"][-1]
+                 if isinstance(last_msg, AIMessage) and isinstance(last_msg.content, str) and last_msg.content.strip():
+                      last_ai_msg_content = last_msg.content.strip()
+                      logger.info(f"Using content from last AIMessage as fallback text: '{last_ai_msg_content[:100]}...'")
 
-            # Use ChatData for the final output structure
-            final_chat_data = ChatData(text=error_text)
-            return {
-                "status": "error",
-                "data": final_chat_data.dict(exclude_none=True),
-                "error": {"code": "AGENT_STRUCTURE_ERROR", "message": "Agent failed to produce FinalApiResponseStructure."},
-             }
+            # If we have fallback content, use it for a success response, otherwise return error
+            if last_ai_msg_content:
+                final_chat_data = ChatData(text=last_ai_msg_content, tables=None, visualizations=None)
+                logger.warning("Returning success response using fallback text due to missing FinalApiResponseStructure tool call.")
+                return {
+                    "status": "success",
+                    "data": final_chat_data.dict(exclude_none=True),
+                    "error": None, # No functional error, just formatting failure by LLM
+                 }
+            else:
+                # If no structure AND no usable last AI message, return error
+                logger.error(f"CRITICAL: No FinalApiResponseStructure and no usable final AIMessage. State: {final_state}")
+                error_text = "I encountered an issue generating the final response structure and couldn't recover a message."
+                final_chat_data = ChatData(text=error_text)
+                return {
+                    "status": "error",
+                    "data": final_chat_data.dict(exclude_none=True),
+                    "error": {"code": "AGENT_STRUCTURE_ERROR", "message": "Agent failed to produce FinalApiResponseStructure or usable message."},
+                 }
 
-        logger.info(f"Successfully obtained FinalApiResponseStructure: Text='{structured_response.text}', IncludeTables={structured_response.include_tables}, IncludeVisualizations={structured_response.include_visualizations}")
+        # --- Process valid final structure ---
+        # Standardized log format using actual attribute names
+        logger.info(f"Successfully obtained FinalApiResponseStructure: text='{structured_response.text}', include_tables={structured_response.include_tables}, include_visualizations={structured_response.include_visualizations}")
 
         # Get all accumulated tables and visualizations from the state
         all_tables = final_state.get('tables', [])
@@ -876,7 +903,7 @@ async def process_chat_message(
         }
 
     except Exception as e:
-        logger.exception(f"Critical error in process_chat_message for user {user_id}, org {organization_id}: {e}", exc_info=True)
+        logger.exception(f"Critical error in process_chat_message for org {organization_id}: {e}", exc_info=True)
         # Ensure consistent error structure
         return {
             "status": "error",
