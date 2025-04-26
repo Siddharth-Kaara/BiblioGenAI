@@ -1,3 +1,0 @@
-"""
-Bibliotheca API package
-"""

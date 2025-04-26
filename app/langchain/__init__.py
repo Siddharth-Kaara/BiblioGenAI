@@ -1,3 +1,0 @@
-"""
-LangChain integration package
-"""
